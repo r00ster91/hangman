@@ -4,8 +4,12 @@ use std::{
     os::unix::io::AsRawFd,
 };
 
-// Control Sequence Introducer (CSI): escape character + left square bracket
-macro_rules! CSI { () => { "\x1B[" } }
+// Control Sequence Introducer: escape character + left square bracket
+macro_rules! CSI {
+    () => {
+        "\x1B["
+    };
+}
 pub const UNDERLINE: &str = concat!(CSI!(), "4m");
 pub const UNDERLINE_OFF: &str = concat!(CSI!(), "24m");
 pub const STRIKE: &str = concat!(CSI!(), "9m");
