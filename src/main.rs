@@ -8,6 +8,8 @@ fn main() {
 
     let mut game = hangman::Game::new(secret_word, secret_word_length, stdin, stdout);
 
+    game.output.push_str("\nGame started!\n");
+
     loop {
         game.draw();
         game.read_guess();

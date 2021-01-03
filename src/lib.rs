@@ -1,14 +1,12 @@
 use bit_vec::BitVec;
-use std::{
-    io::{self, Write},
-    process,
-};
+use std::{io, process};
 mod terminal;
 
 pub struct Game {
     secret_word: String,
     guessed_letters: BitVec,
-    wrong_letters: Vec<char>,
+    incorrect_guesses: Vec<char>,
+    pub output: String,
     guess: String,
     stdin: io::Stdin,
     stdout: io::Stdout,
@@ -24,8 +22,8 @@ impl Game {
         Game {
             secret_word,
             guessed_letters: BitVec::from_elem(secret_word_length, false),
-            wrong_letters: Vec::with_capacity(1),
-
+            incorrect_guesses: Vec::new(),
+            output: String::with_capacity(GALLOWS_0.len()),
             guess: String::with_capacity(1),
             stdin,
             stdout,
@@ -33,41 +31,43 @@ impl Game {
     }
 
     pub fn read_guess(&mut self) -> char {
-        print!("Guess: ");
-        self.stdout.flush();
+        read("Guess", &mut self.guess, &self.stdin, &self.stdout);
 
-        self.stdin.read_line(&mut self.guess);
+        if self.guess == self.secret_word {
+            self.guessed_letters.set_all();
+            self.draw();
+            self.output.push_str("Word was guessed!");
+            quit(&self.output, 0);
+        }
 
-        let guessed_character = self.guess.chars().next();
+        let guessed_character = self.guess.chars().next().unwrap();
 
         self.guess.clear();
 
-        let mut chars = &mut self.secret_word.chars();
-        let mut correct = false;
-        for (index, char) in chars.enumerate() {
-            if guessed_character == Some(char) {
+        let mut one_match = false;
+        for (index, char) in self.secret_word.chars().enumerate() {
+            if guessed_character == char {
                 self.guessed_letters.set(index, true);
-                correct = true;
+                one_match = true;
             }
         }
 
-        if !correct {
+        if !one_match {
             for char in self.secret_word.chars() {
-                if guessed_character != Some(char)
-                    && !self.wrong_letters.contains(&guessed_character.unwrap())
+                if guessed_character != char && !self.incorrect_guesses.contains(&guessed_character)
                 {
-                    self.wrong_letters.push(guessed_character.unwrap());
+                    self.incorrect_guesses.push(guessed_character);
                     break;
                 }
             }
         }
 
-        guessed_character.unwrap()
+        guessed_character
     }
 
-    pub fn draw(&self) {
-        let mut game_over = false;
-        let gallows = match self.wrong_letters.len() {
+    pub fn draw(&mut self) {
+        let mut hanged = false;
+        let gallows = match self.incorrect_guesses.len() {
             0 => GALLOWS_0,
             1 => GALLOWS_1,
             2 => GALLOWS_2,
@@ -75,74 +75,98 @@ impl Game {
             4 => GALLOWS_4,
             5 => GALLOWS_5,
             _ => {
-                game_over = true;
+                hanged = true;
                 GALLOWS_6
             }
         };
 
-        println!();
-        println!();
-        println!("{}", gallows);
+        self.output.push_str(gallows);
 
-        let mut chars = self.secret_word.chars();
+        let mut secret_word_characters = self.secret_word.chars();
 
         for guessed in &self.guessed_letters {
-            let letter = chars.next();
+            let letter = secret_word_characters.next().unwrap();
             if guessed {
-                print!(
-                    "{}{}{} ",
-                    terminal::UNDERLINE,
-                    letter.unwrap(),
-                    terminal::UNDERLINE_OFF
-                );
+                self.output.push_str(terminal::UNDERLINE);
+                self.output.push(letter);
+                self.output.push_str(terminal::UNDERLINE_OFF);
+                self.output.push(' ');
             } else {
-                print!("_ ");
+                self.output.push_str("_ ");
             }
         }
-        println!();
+        self.output.push('\n');
 
-        for wrong in &self.wrong_letters {
-            print!("{}{}{} ", terminal::STRIKE, wrong, terminal::STRIKE_OFF);
+        for incorrect_guess in &self.incorrect_guesses {
+            self.output.push_str(terminal::STRIKE);
+            self.output.push(*incorrect_guess);
+            self.output.push_str(terminal::STRIKE_OFF);
+            self.output.push(' ');
         }
-        println!();
+        self.output.push('\n');
 
-        if game_over {
-            println!("GAME OVER");
-            process::exit(0);
+        if hanged {
+            self.output.push_str("Hangman was hanged!");
+            quit(&self.output, 0);
         } else if self.guessed_letters.all() {
-            println!("VICTORY");
-            process::exit(0);
+            self.output.push_str("Word was guessed!");
+            quit(&self.output, 0);
         }
+
+        println!("{}", self.output);
+        self.output.clear()
     }
 }
 
-pub fn read_secret_word(stdin: &io::Stdin, mut stdout: &io::Stdout) -> (String, usize) {
+pub fn read_secret_word(stdin: &io::Stdin, stdout: &io::Stdout) -> (String, usize) {
     terminal::echo(stdin, false);
 
     let mut secret_word = String::with_capacity(1);
-    let mut length;
-    loop {
-        print!("Secret word (echo off): ");
-        stdout.flush();
-        if stdin.read_line(&mut secret_word).is_ok() {
-            secret_word = secret_word.trim().to_string();
-            length = secret_word.chars().count();
-            if length < 1 {
-                println!("Secret word must be at least 1 character long!");
-                secret_word.clear();
-                continue;
-            }
-            break;
-        }
-    }
+
+    let length = read("Secret word", &mut secret_word, &stdin, &stdout);
 
     terminal::echo(stdin, true);
 
     (secret_word, length)
 }
 
-pub const GALLOWS_0: &str = "
-      ┌──────┐
+fn read(
+    thing: &str,
+    /*into*/ buffer: &mut String,
+    /*from*/ stdin: &io::Stdin,
+    stdout: &io::Stdout,
+) -> usize {
+    let mut length;
+
+    print!("{}: ", thing);
+    terminal::flush(&stdout);
+    loop {
+        if stdin.read_line(buffer).is_ok() {
+            *buffer = buffer.trim().to_string();
+            length = buffer.chars().count();
+            if length < 1 {
+                print!(
+                    "{} must be at least one character long!\n\
+                     {}: ",
+                    thing, thing
+                );
+                terminal::flush(&stdout);
+                buffer.clear();
+                continue;
+            }
+            break;
+        }
+    }
+
+    length
+}
+
+fn quit(string: &str, code: i32) {
+    println!("{message}", message = string);
+    process::exit(code);
+}
+
+pub const GALLOWS_0: &str = "      ┌──────┐
       │╱     |
       │      |
       │
@@ -151,8 +175,7 @@ pub const GALLOWS_0: &str = "
       │
 _____╱│╲________
 ";
-pub const GALLOWS_1: &str = "
-      ┌──────┐
+pub const GALLOWS_1: &str = "      ┌──────┐
       │╱     |
       │      |
       │      O
@@ -161,8 +184,7 @@ pub const GALLOWS_1: &str = "
       │
 _____╱│╲________
 ";
-pub const GALLOWS_2: &str = "
-      ┌──────┐
+pub const GALLOWS_2: &str = "      ┌──────┐
       │╱     |
       │      |
       │      O
@@ -171,8 +193,7 @@ pub const GALLOWS_2: &str = "
       │
 _____╱│╲________
 ";
-pub const GALLOWS_3: &str = "
-      ┌──────┐
+pub const GALLOWS_3: &str = "      ┌──────┐
       │╱     |
       │      |
       │      O
@@ -181,8 +202,7 @@ pub const GALLOWS_3: &str = "
       │
 _____╱│╲________
 ";
-pub const GALLOWS_4: &str = "
-      ┌──────┐
+pub const GALLOWS_4: &str = "      ┌──────┐
       │╱     |
       │      |
       │      O
@@ -191,8 +211,7 @@ pub const GALLOWS_4: &str = "
       │
 _____╱│╲________
 ";
-pub const GALLOWS_5: &str = "
-      ┌──────┐
+pub const GALLOWS_5: &str = "      ┌──────┐
       │╱     |
       │      |
       │      O
@@ -201,8 +220,7 @@ pub const GALLOWS_5: &str = "
       │
 _____╱│╲________
 ";
-pub const GALLOWS_6: &str = "
-      ┌──────┐
+pub const GALLOWS_6: &str = "      ┌──────┐
       │╱     |
       │      |
       │      O
